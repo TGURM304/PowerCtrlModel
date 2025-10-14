@@ -18,18 +18,31 @@ double get_real_current(double current) {
 
 // 功率模型函数的实现
 //在调用这个函数时填入电机电流（反馈电流和发送电流均可，单位一致）和电机反馈速度，接收得到的预测功率值
-double cal_m3508_power_by_model(double current, double speed) {
+double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed) {
 
     //近似认为电机正反转所有参数高度对称，所以加上绝对值
     current = std::abs(get_real_current(current));
     speed = std::abs(speed);
-    const double power = M_3508_K0 +
-                   M_3508_K1 * current+
-                   M_3508_K2 * speed +
-                   M_3508_K3 * current * speed +
-                   M_3508_K4 * current * current +
-                   M_3508_K5 * speed * speed;
-    return power;
+
+    switch (motor_type) {
+    case M3508_powermodel:
+        return M_3508_K0 +
+               M_3508_K1 * current +
+               M_3508_K2 * speed +
+               M_3508_K3 * current * speed +
+               M_3508_K4 * current * current +
+               M_3508_K5 * speed * speed;
+    case GM6020_powermodel:
+        return M_6020_K0 +
+               M_6020_K1 * current +
+               M_6020_K2 * speed +
+               M_6020_K3 * current * speed +
+               M_6020_K4 * current * current +
+               M_6020_K5 * speed * speed;
+    default:
+        return 0.0;
+    }
+
 }
 
 //基于所需速度的等比功率分配
@@ -120,14 +133,14 @@ std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_
 
 //计算衰减系数，输入 想要发送的电流，这一时刻的速度，这个电机的最大分配功率，返回一个计算后的衰减系数
 //用这个衰减系数乘输出电流后更新给电机就会使电机消耗的功率限制在你设定的功率下（以模型计算出来的功率为参照物）
-double calculate_attenuation(double desired_current, double current_speed, const double power_limit) {
+double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_current, double current_speed, const double power_limit) {
     //在调用这个函数时要把想要发送的电流（直接发给电机的数）除1000.0才会算出准确值！！！！！！！！！！！！！！
     //近似认为电机正反转所有参数高度对称，所以加上绝对值
     double real_desired_current = std::abs(get_real_current(desired_current));
     double real_current_speed = std::abs(current_speed);
 
     //未超上限不衰减
-    if (const double predicted_power = cal_m3508_power_by_model(desired_current, current_speed);
+    if (const double predicted_power = cal_motor_power_by_model(motor_type, desired_current, current_speed);
        predicted_power <= power_limit) {
         return 1.0;
     }
