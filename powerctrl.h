@@ -23,12 +23,12 @@
 #define M_3508_K5 1.08e-7
 
 //6020参数
-#define M_6020_K0 0.0
-#define M_6020_K1 0.0
-#define M_6020_K2 0.0
-#define M_6020_K3 0.0
-#define M_6020_K4 0.0
-#define M_6020_K5 0.0
+#define M_6020_K0 0.7507578
+#define M_6020_K1 (-0.0759636)
+#define M_6020_K2 (-0.00153397)
+#define M_6020_K3 0.01225624
+#define M_6020_K4 0.19101805
+#define M_6020_K5 0.0000066450
 
 //视为error较小时的总error参照值
 //error小于大于这个值才会根据error分配功率，否则均分功率
@@ -43,11 +43,11 @@
 #define SmallGyro_Power_Compensation_Alpha 0.05
 
 enum E_Motor_PowerModel_Type{M3508_powermodel,GM6020_powermodel};
+enum E_CalMotorPower_Negative_Status_Type{E_disabled_negative,E_enable_negative};
 
 double get_real_current(double current);
-double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed);
+double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed,E_CalMotorPower_Negative_Status_Type Negative_Status = E_disabled_negative);
 double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_current, double current_speed, double power_limit);
-
 std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit);
 
 double rotate_speed_allocation(int16_t vx, int16_t vy, int16_t rotate, double alpha);

@@ -18,17 +18,21 @@ double get_real_current(double current) {
 
 // 功率模型函数的实现
 //在调用这个函数时填入电机电流（反馈电流和发送电流均可，单位一致）和电机反馈速度，接收得到的预测功率值
-double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed) {
+double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed,E_CalMotorPower_Negative_Status_Type Negative_Status) {
 
     //额外算一下速度和电流异号情况
     double product = current*speed;
     double power_sign = 1;
     //取消下面注释则启用正负功率计算
-    //但是正负功率的计算仅适用于对电机反馈的电流计算，而不能对给电机发送的电流算
-    //所以这一项默认注释掉
-    // if(product < 0 ) {
-    //     power_sign = -1;
-    // }
+    //但是正负功率的计算仅适用于对电机反馈的电流计算，而不能对给电机发送的电流算！！！
+    //所以一般没什么用
+    //使用：根据调用函数第四个参数来确定开启或关闭
+    if (Negative_Status == E_enable_negative) {
+            if(product < 0 ) {
+            power_sign = -1;
+        }
+    }
+
 
     //近似认为电机正反转所有参数高度对称，所以加上绝对值
     current = std::abs(get_real_current(current));
@@ -114,76 +118,6 @@ std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_
     return motor_power_limits_vector;
 }
 
-//这一版为些许改良版本
-//依据总error占M_Too_Small_AllErrors的大小，加权error分配和等比分配
-//参考了广工功率控制的方案，是ai给我改的，不过我感觉从效果来说和我上面那一版差不多，
-
-// std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit) {
-//
-//     #ifdef SmallGyro_Power_Compensation
-//     total_power_limit *= (1-SmallGyro_Power_Compensation_Alpha);
-//     #endif
-//
-//     if (motor_errors_vector.size() != 4) {
-//         return {0.0, 0.0, 0.0, 0.0} ;
-//     }
-//
-//     // 对error取绝对值
-//     for (double& error : motor_errors_vector) {
-//         error = std::abs(error);
-//     }
-//
-//     if (total_power_limit <= 1e-9) {
-//         return {0.0, 0.0, 0.0, 0.0};
-//     }
-//
-//     const double total_error = std::accumulate(motor_errors_vector.begin(), motor_errors_vector.end(), 0.0);
-//
-//     // 处理总误差较小的情况：混合平均分配和误差比例分配
-//     if (total_error <= M_Too_Small_AllErrors) {
-//         // 计算混合权重alpha（0~1），避免除零
-//         double alpha = 0.0;
-//         if (M_Too_Small_AllErrors > 1e-9) {  // 防止阈值为0导致除零
-//             alpha = total_error / M_Too_Small_AllErrors;
-//             alpha = std::max(0.0, std::min(1.0, alpha));  // 限制在[0,1]范围
-//         }
-//
-//         // 1. 计算平均分配的功率
-//         const int motor_count = motor_errors_vector.size();
-//         const double equal_share = total_power_limit / motor_count;
-//
-//         // 2. 计算误差比例分配的功率（处理总误差为0的特殊情况）
-//         std::vector<double> error_based_shares(motor_count);
-//         if (total_error <= 1e-9) {
-//             // 总误差为0时，误差分配无意义，直接用平均分配值
-//             std::fill(error_based_shares.begin(), error_based_shares.end(), equal_share);
-//         } else {
-//             for (int i = 0; i < motor_count; ++i) {
-//                 const double ratio = motor_errors_vector[i] / total_error;
-//                 error_based_shares[i] = ratio * total_power_limit;
-//             }
-//         }
-//
-//         // 3. 按权重混合两种分配方式
-//         std::vector<double> motor_power_limits_vector(motor_count);
-//         for (int i = 0; i < motor_count; ++i) {
-//             motor_power_limits_vector[i] = (1 - alpha) * equal_share + alpha * error_based_shares[i];
-//         }
-//
-//         return motor_power_limits_vector;
-//     }
-//
-//     // 总误差超过阈值时，完全按误差比例分配
-//     std::vector<double> motor_power_limits_vector(4);
-//     for (int i = 0; i < 4; ++i) {
-//         const double ratio = motor_errors_vector[i] / total_error;
-//         motor_power_limits_vector[i] = ratio * total_power_limit;
-//     }
-//
-//     return motor_power_limits_vector;
-// }
-
-
 //计算衰减系数，输入 想要发送的电流，这一时刻的速度，这个电机的最大分配功率，返回一个计算后的衰减系数
 //用这个衰减系数乘输出电流后更新给电机就会使电机消耗的功率限制在你设定的功率下（以模型计算出来的功率为参照物）
 double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_current, double current_speed, const double power_limit) {
@@ -229,7 +163,6 @@ double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_
     if (a < 1e-9 && a > -1e-9) { // 用极小值判断浮点数是否为0，避免精度问题
         return 0.0;
     }
-
 
     //判别式小于0，说明方程无解
     //如果方程无解，那么说明电流无论给什么值也不能在限定功率下正常工作（就是由于限定功率太小，导致电流给什么值都会超功率）
