@@ -20,70 +20,41 @@ double get_real_current(double current) {
 //在调用这个函数时填入电机电流（反馈电流和发送电流均可，单位一致）和电机反馈速度，接收得到的预测功率值
 double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed) {
 
+    //额外算一下速度和电流异号情况
+    double product = current*speed;
+    double power_sign = 1;
+    //取消下面注释则启用正负功率计算
+    //但是正负功率的计算仅适用于对电机反馈的电流计算，而不能对给电机发送的电流算
+    //所以这一项默认注释掉
+    // if(product < 0 ) {
+    //     power_sign = -1;
+    // }
+
     //近似认为电机正反转所有参数高度对称，所以加上绝对值
     current = std::abs(get_real_current(current));
     speed = std::abs(speed);
 
     switch (motor_type) {
     case M3508_powermodel:
-        return M_3508_K0 +
+        return (M_3508_K0 +
                M_3508_K1 * current +
                M_3508_K2 * speed +
                M_3508_K3 * current * speed +
                M_3508_K4 * current * current +
-               M_3508_K5 * speed * speed;
+               M_3508_K5 * speed * speed)*power_sign;
     case GM6020_powermodel:
-        return M_6020_K0 +
+        return (M_6020_K0 +
                M_6020_K1 * current +
                M_6020_K2 * speed +
                M_6020_K3 * current * speed +
                M_6020_K4 * current * current +
-               M_6020_K5 * speed * speed;
+               M_6020_K5 * speed * speed)*power_sign;
     default:
         return 0.0;
     }
 
 }
 
-//基于所需速度的等比功率分配
-//这一版理论不如根据error值分配的版本，详细见下一个函数
-std::vector<double> power_allocation_by_speed(std::vector<float>& motor_speeds_vector, const double total_power_limit) {
-
-    //查输入是否有效
-    if (motor_speeds_vector.size() != 4) {
-        return {0.0, 0.0, 0.0, 0.0} ;
-    }
-
-    //对速度取绝对值
-    for (float& speed : motor_speeds_vector) {
-        speed = std::abs(speed);
-    }
-
-    // 如果总功率上限为0，那么所有电机的功率上限都为0
-    if (total_power_limit <= 1e-9) {
-        return {0.0, 0.0, 0.0, 0.0};
-    }
-
-    // 1. 计算总速度
-    const double total_speed = std::accumulate(motor_speeds_vector.begin(), motor_speeds_vector.end(), 0.0);
-
-    // 2. 处理总速度为0的特殊情况
-    // 如果所有电机都不转，一个公平的策略是平均分配功率上限，或者都为0。
-    // 这里选择平均分配，因为即使不转，可能也需要基础功耗。
-    if (total_speed <= 1e-9) {
-        double equal_share = total_power_limit / motor_speeds_vector.size();
-        return {equal_share, equal_share, equal_share, equal_share};
-    }
-
-    // 3. 按比例分配功率
-    std::vector<double> motor_power_limits_vector(4);
-    for (int i = 0; i < 4; ++i) {
-        const double ratio = motor_speeds_vector[i] / total_speed;
-        motor_power_limits_vector[i] = ratio * total_power_limit;
-    }
-
-    return motor_power_limits_vector;
-}
 
 //基于电机pid的error值来分配功率
 //且在总error值较低时采取均分功率的策略
@@ -93,7 +64,18 @@ std::vector<double> power_allocation_by_speed(std::vector<float>& motor_speeds_v
 //std::vector<double> motor_error_vector = {你pid的error1, error2, error3, error4};
 //double max_power_limit = 150.0 //你的设定功率上限
 //std::vector<double> motor_limit_power_vector = power_allocation_by_error(motor_error_vector, max_power_limit);//用来接收,顺序和你填入电机error的一致
-std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, const double total_power_limit) {
+
+std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit) {
+
+    //经测试 在根据error分配总功率的情况下 当小陀螺或速度剧烈变化时 给轮向电机发送的电流值剧烈变化，衰减系数无解，只能发送0电流
+    //而即使发送0电流也会继续有功率产生（具体原因见calculate_attenuation函数的说明）
+    //增加数值约功率上限的5%-10%占比,貌似总功率越大增加的数值占比越小
+    //所以最好读取 裁判系统缓冲功率 或 超级电容功率 来进行功率闭环
+    //如果没有以上操作可以选择牺牲一点功率上限换取稳定不超限
+    //此选项通过在powerctrl.h中取消注释define来启用，同时也在那里更改SmallGyro_Power_Compensation_Alpha的值
+    #ifdef SmallGyro_Power_Compensation
+    total_power_limit *= (1-SmallGyro_Power_Compensation_Alpha);
+    #endif
 
     //查输入是否有效
     if (motor_errors_vector.size() != 4) {
@@ -110,8 +92,9 @@ std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_
         return {0.0, 0.0, 0.0, 0.0};
     }
 
+
     // 1. 计算总error
-    const double total_error = std::accumulate(motor_errors_vector.begin(), motor_errors_vector.end(), 0.0);
+    const double total_error = motor_errors_vector[0]+motor_errors_vector[1]+motor_errors_vector[2]+motor_errors_vector[3];
 
     // 2. 处理总error过小的特殊情况
     // 此时引起总error过小的可能是因为底盘静止或者在斜坡上等原因
@@ -131,6 +114,76 @@ std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_
     return motor_power_limits_vector;
 }
 
+//这一版为些许改良版本
+//依据总error占M_Too_Small_AllErrors的大小，加权error分配和等比分配
+//参考了广工功率控制的方案，是ai给我改的，不过我感觉从效果来说和我上面那一版差不多，
+
+// std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit) {
+//
+//     #ifdef SmallGyro_Power_Compensation
+//     total_power_limit *= (1-SmallGyro_Power_Compensation_Alpha);
+//     #endif
+//
+//     if (motor_errors_vector.size() != 4) {
+//         return {0.0, 0.0, 0.0, 0.0} ;
+//     }
+//
+//     // 对error取绝对值
+//     for (double& error : motor_errors_vector) {
+//         error = std::abs(error);
+//     }
+//
+//     if (total_power_limit <= 1e-9) {
+//         return {0.0, 0.0, 0.0, 0.0};
+//     }
+//
+//     const double total_error = std::accumulate(motor_errors_vector.begin(), motor_errors_vector.end(), 0.0);
+//
+//     // 处理总误差较小的情况：混合平均分配和误差比例分配
+//     if (total_error <= M_Too_Small_AllErrors) {
+//         // 计算混合权重alpha（0~1），避免除零
+//         double alpha = 0.0;
+//         if (M_Too_Small_AllErrors > 1e-9) {  // 防止阈值为0导致除零
+//             alpha = total_error / M_Too_Small_AllErrors;
+//             alpha = std::max(0.0, std::min(1.0, alpha));  // 限制在[0,1]范围
+//         }
+//
+//         // 1. 计算平均分配的功率
+//         const int motor_count = motor_errors_vector.size();
+//         const double equal_share = total_power_limit / motor_count;
+//
+//         // 2. 计算误差比例分配的功率（处理总误差为0的特殊情况）
+//         std::vector<double> error_based_shares(motor_count);
+//         if (total_error <= 1e-9) {
+//             // 总误差为0时，误差分配无意义，直接用平均分配值
+//             std::fill(error_based_shares.begin(), error_based_shares.end(), equal_share);
+//         } else {
+//             for (int i = 0; i < motor_count; ++i) {
+//                 const double ratio = motor_errors_vector[i] / total_error;
+//                 error_based_shares[i] = ratio * total_power_limit;
+//             }
+//         }
+//
+//         // 3. 按权重混合两种分配方式
+//         std::vector<double> motor_power_limits_vector(motor_count);
+//         for (int i = 0; i < motor_count; ++i) {
+//             motor_power_limits_vector[i] = (1 - alpha) * equal_share + alpha * error_based_shares[i];
+//         }
+//
+//         return motor_power_limits_vector;
+//     }
+//
+//     // 总误差超过阈值时，完全按误差比例分配
+//     std::vector<double> motor_power_limits_vector(4);
+//     for (int i = 0; i < 4; ++i) {
+//         const double ratio = motor_errors_vector[i] / total_error;
+//         motor_power_limits_vector[i] = ratio * total_power_limit;
+//     }
+//
+//     return motor_power_limits_vector;
+// }
+
+
 //计算衰减系数，输入 想要发送的电流，这一时刻的速度，这个电机的最大分配功率，返回一个计算后的衰减系数
 //用这个衰减系数乘输出电流后更新给电机就会使电机消耗的功率限制在你设定的功率下（以模型计算出来的功率为参照物）
 double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_current, double current_speed, const double power_limit) {
@@ -139,30 +192,73 @@ double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_
     double real_desired_current = std::abs(get_real_current(desired_current));
     double real_current_speed = std::abs(current_speed);
 
-    //未超上限不衰减
+    // 未超上限不衰减（不包含负功率的情况，因为近似认定只要给他发送电流均为耗电电机）
     if (const double predicted_power = cal_motor_power_by_model(motor_type, desired_current, current_speed);
        predicted_power <= power_limit) {
+        return 1.0;
+       }
+
+    double motor_k0,motor_k1,motor_k2,motor_k3,motor_k4,motor_k5;
+    if(motor_type == M3508_powermodel) {
+        motor_k0 = M_3508_K0;
+        motor_k1 = M_3508_K1;
+        motor_k2 = M_3508_K2;
+        motor_k3 = M_3508_K3;
+        motor_k4 = M_3508_K4;
+        motor_k5 = M_3508_K5;
+    }else if (motor_type == GM6020_powermodel) {
+        motor_k0 = M_6020_K0;
+        motor_k1 = M_6020_K1;
+        motor_k2 = M_6020_K2;
+        motor_k3 = M_6020_K3;
+        motor_k4 = M_6020_K4;
+        motor_k5 = M_6020_K5;
+    }else {
         return 1.0;
     }
 
     //超上限了，则带入当前速度w，最大功率限制Pmax 于预测模型，解关于 I(衰减后) 的方程得到 I(衰减后)
     //再根据I衰减后 =衰减系数k * I原本想要发送值  解出衰减系数k，取值于0.0-1.0间
-
-    const double a = M_3508_K4 * real_desired_current * real_desired_current;
-    const double b = (M_3508_K1 + M_3508_K3 * real_current_speed) * real_desired_current;
-    const double c = M_3508_K0 + M_3508_K2 * real_current_speed + M_3508_K5 * real_current_speed * real_current_speed - power_limit;
+    const double a = motor_k4 * real_desired_current * real_desired_current;
+    const double b = (motor_k1 + motor_k3 * real_current_speed) * real_desired_current;
+    const double c = motor_k0 + motor_k2 * real_current_speed + motor_k5 * real_current_speed * real_current_speed - power_limit;
     const double discriminant = b * b - 4 * a * c;
 
-    if (discriminant < 0) {
+    // 避免除以零：a=0时无二次项，直接返回0（完全衰减）
+    // 不过貌似不开也没问题
+    if (a < 1e-9 && a > -1e-9) { // 用极小值判断浮点数是否为0，避免精度问题
         return 0.0;
     }
 
-    const double k = (-b + std::sqrt(discriminant)) / (2 * a);
 
+    //判别式小于0，说明方程无解
+    //如果方程无解，那么说明电流无论给什么值也不能在限定功率下正常工作（就是由于限定功率太小，导致电流给什么值都会超功率）
+    //所以当根据error分配功率时，在轮组速度急剧变化（尤其是小陀螺平移的时候）即使这个情况返回了0.0的衰减系数 使发送电流为0
+    //那么还是会超功率的
+    //有3种解决方法：1，在功率底盘总功率分配时少分配一点作为保险（比如比赛限定功率75w，那么只分配70w，这样会安全一点，但也有可能瞬间超）
+    //            2.根据超级电容或者底盘缓冲功率做一个闭环：如果检测到这两个功率短时间内大量消耗，那么就减小一点总限定功率
+    //       todo:3.当检测到这种情况时 使出现问题的电机不采用error分配，强行把发送电流为0时的功率分配进去（我很建议这种方案，但是还没有写，准备要去写这个）
+    if (discriminant < 0) {
+        return 0.0; ;
+    }
+
+    const double k = (-b + std::sqrt(discriminant)) / (2 * a);
     if (k < 0.0) return 0.0;
     if (k > 1.0) return 1.0;
     return k;
 
+}
+
+//todo：试验性功能:根据平移速度分配旋转速度，减小偏移
+double rotate_speed_allocation(int16_t vx, int16_t vy, int16_t rotate, double alpha) {
+    double adjusted_rotate = 0;
+    double translation = 0.5*vx + 0.5*vy;
+    if(translation <= 1e-9) {
+        return rotate;
+    }
+    adjusted_rotate = rotate - alpha * translation;;
+
+    return adjusted_rotate;
 }
 
 //应用一阶低通滤波求一个平滑的功率曲线，系数alpha越大越平滑

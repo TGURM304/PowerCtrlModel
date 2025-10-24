@@ -31,17 +31,27 @@
 #define M_6020_K5 0.0
 
 //视为error较小时的总error参照值
+//error小于大于这个值才会根据error分配功率，否则均分功率
 //此参数取决于你的pid参数，参考取自所有电机稳定状态下的最大error值之和，你的pid调的越好这个值越小
-#define M_Too_Small_AllErrors 1000.0
+#define M_Too_Small_AllErrors 500.0
+
+//小陀螺功率补偿
+//关于是否开启此，见.c中std::vector<double> power_allocation_by_error函数内的说明
+#define SmallGyro_Power_Compensation
+//补偿的比率，这个数越大 在小陀螺时功率限制的越稳定，但同时非小陀螺时功率利用率也越低
+//一般在0.05到0.10之间选择
+#define SmallGyro_Power_Compensation_Alpha 0.05
 
 enum E_Motor_PowerModel_Type{M3508_powermodel,GM6020_powermodel};
 
 double get_real_current(double current);
 double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed);
-
 double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_current, double current_speed, double power_limit);
-std::vector<double> power_allocation_by_speed(std::vector<float>& motor_speeds_vector, double total_power_limit);
+
 std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit);
+
+double rotate_speed_allocation(int16_t vx, int16_t vy, int16_t rotate, double alpha);
+
 void applyLowPassFilter(double& value, double new_value, double alpha );
 class MovingAverageFilter {
 public:
