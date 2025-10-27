@@ -16,11 +16,12 @@ double get_real_current(double current) {
                                                             //也就是在.h文件里宏定义的M_RealCurrent_Conversion这个
 }
 
-// 功率模型函数的实现
+// 功率预测模型函数的实现
 //在调用这个函数时填入电机电流（反馈电流和发送电流均可，单位一致）和电机反馈速度，接收得到的预测功率值
 //如果你想测出即将发送的功率来进行功率控制，请填入发送电流
 //反之，如果你只是想简单预测一下电机组消耗的功率，请填入反馈电流
-//注意：在负载很小且高速度时（比如底盘架起来让电机高速转）使用此模型可能会不准（表现为多预测5%-10%左右）推测这一点和模型采样未涉及有关
+//注意：1.在负载很小且高速度时（比如底盘架起来让电机高速转）使用此模型可能会不准（表现为多预测5%-10%左右）推测这一点和模型采样未涉及有关
+//     2.对于填入反馈电流和填入发送电流可能得到的功率不完全相同，因为反馈电流不完全等于发送电流
 double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed,E_CalMotorPower_Negative_Status_Type Negative_Status) {
 
     //额外算一下速度和电流异号情况
@@ -74,7 +75,7 @@ std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_
     //如果没有以上操作可以选择牺牲一点功率上限换取稳定不超限（即下面define内的内容）
     //此选项通过在powerctrl.h中取消注释define来启用，同时也在那里更改SmallGyro_Power_Compensation_Alpha的值
     #ifdef SmallGyro_Power_Compensation
-    total_power_limit *= (1-SmallGyro_Power_Compensation_Alpha);
+    total_power_limit *= (1-M_SmallGyro_Power_Compensation_Alpha);
     #endif
 
     //查输入是否有效
@@ -105,11 +106,20 @@ std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_
     }
 
     // 3. 按比例分配功率
+    //这里使用了calculate_attenuation函数中说明的第四种补偿方案，详细信息见那个函数和.h文件
     std::vector<double> motor_power_limits_vector(4);
-    for (int i = 0; i < 4; ++i) {
-        const double ratio = motor_errors_vector[i] / total_error;
-        motor_power_limits_vector[i] = ratio * total_power_limit;
+    if(total_power_limit < M_Motor_ReservedPower_Border) {
+        for (int i = 0; i < 4; ++i) {
+            const double ratio = motor_errors_vector[i] / total_error;
+            motor_power_limits_vector[i] = ratio * total_power_limit;
+        }
+    }else {
+        for (int j = 0; j < 4; ++j) {
+            const double ratio = motor_errors_vector[j] / (total_error - 4*M_PerMotor_ReservedPower);
+            motor_power_limits_vector[j] = ratio * (total_power_limit-4 * M_PerMotor_ReservedPower) + M_PerMotor_ReservedPower;
+        }
     }
+
 
     return motor_power_limits_vector;
 }
@@ -179,8 +189,9 @@ double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_
     //那么还是会超功率的（电机空转时发送电流为0但由于有速度存在，还是会消耗功率）
     //有3种解决方法：1，在功率底盘总功率分配时少分配一点作为保险（比如比赛限定功率75w，那么只分配70w，这样会安全一点，但也有可能瞬间超）
     //            2.根据超级电容或者底盘缓冲功率做一个闭环：如果检测到这两个功率短时间内大量消耗，那么就减小一点总限定功率
-    //       todo:3.当检测到这种情况时 使出现问题的电机不采用error分配，强行把发送电流为0时的功率分配进去（我很建议这种方案，但是还没有写，准备要去写这个）
+    //       todo:3.当检测到这种情况时 使出现问题的电机不采用error分配，强行把发送电流为0时的功率分配进去（我很建议这种方案和下面的方案）
     //       todo:4.和3类似，分配功率时 给每个轮子预留最小消耗功率 （从而防止分配时无视这部分功率而分配给别的电机导致最终超出这部分功率）
+    //目前采用第四个方案，感觉效果较好
     if (discriminant < 0) {
         return 0.0; ;
     }
