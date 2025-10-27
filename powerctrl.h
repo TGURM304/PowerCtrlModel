@@ -37,7 +37,7 @@
 
 //小陀螺功率补偿
 //关于是否开启此，见.c中std::vector<double> power_allocation_by_error函数内的说明
-#define SmallGyro_Power_Compensation
+// #define SmallGyro_Power_Compensation
 //补偿的比率，这个数越大 在小陀螺时功率限制的越稳定，但同时非小陀螺时功率利用率也越低
 //一般在0.05到0.10之间选择
 #define SmallGyro_Power_Compensation_Alpha 0.05
