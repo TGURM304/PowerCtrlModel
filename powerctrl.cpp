@@ -47,7 +47,7 @@ double cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double curre
 
 std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit) {
 
-    #ifdef M_SmallGyro_Power_Compensation_Alpha
+    #ifdef M_Enable_PowerCompensation
     total_power_limit *= (1-M_SmallGyro_Power_Compensation_Alpha);
     #endif
 
