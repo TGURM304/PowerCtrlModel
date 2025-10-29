@@ -22,6 +22,7 @@
 - 对于类型，只拟合了DJI M3508和GM6020电机的模型，如果你需要测量其他电机功率或使用自己的参数，请自行拟合模型
 - 类型的枚举量在powerctrl.h中已列出，以3508电机为例，则填入M3508_powermodel
 - 第二和第三个参数要填入电流和速度，通常情况下直接填入电机反馈值即可(电流处也可填入欲发送电流来限制功率，详细见功率控制部分)
+- (注意由于反馈电流和发送电流表现出的数值并非完全一致，所以不同情况下填入某种电流可能导致误差(比如填入反馈电流时 在底盘电机低负载高速度的时候会多预测5-10%的功率) 因此请根据你的目的来决定填入反馈电流还是控制电流)
 - 第四个参数为是否启用负功率计算的选项，由于通常来说不需要考虑，所以不用填入(此选项.h中默认声明为E_disabled_negative）
 ```c++
     - cal_motor_power_by_model(E_Motor_PowerModel_Type motor_type ,double current, double speed,E_CalMotorPower_Negative_Status_Type Negative_Status)
@@ -40,8 +41,9 @@ stable_power_by_model = powerFilter.update(power_by_model);
 
 ### 2.用于限制底盘总功率/单电机功率
 - 第一步使用下面函数分配功率
-- 对于常规的四电机底盘模型,你需要先创建一个4个float大小的vector，在里面按顺序填上你的电机速度，然后把这个填入函数形参，再把总功率上限填入函数形参
+- 对于常规的四电机底盘模型,你需要先创建一个4个double大小的vector，在里面按顺序填上你的电机error值，然后把这个填入函数形参，再把总功率上限填入函数形参
 - 之后创建一个4个double大小的vector，用于接收函数返回的分配好的四个电机功率，顺序和你填入的相同
+- 此函数内部设置了 在给底盘限制比赛最低功率以上时的每个电机最低分配功率值，从而保证不会出现error过小导致电流无解进而超功率的情况，具体见下面说明
 ```c++
 std::vector<double> power_allocation_by_error(std::vector<double>& motor_errors_vector, double total_power_limit)
 ```
@@ -58,10 +60,10 @@ double calculate_attenuation(E_Motor_PowerModel_Type motor_type, double desired_
 
 ### 3.注意
 - 对于比赛来说 每一种底盘都需要在使用以上步骤后多进行一些调整
-- 比如全向轮需要补偿不同方向的速度来保证小陀螺平移能走直线
+- 比如全向轮需要测量真实方向速度来补偿目标值从而保证小陀螺平移能走直线
 - (因为你是对输出值直接衰减，所以会破坏运动学解算。当然也有其他办法比如反过来衰减一下速度，看你设计)
 - 又如舵轮由于存在舵向电机和轮向电机，需要先把总功率分配给*舵组*和*轮组*，再对这两部分来分配四个电机功率
-- 你可以简单针对不同构型写一下使用，后续我也可能会制作不同底盘的详细分配方法
+- 你可以简单针对你想应用构型写一下使用，后续我也可能会制作不同底盘的详细分配逻辑
 
 ## 对函数的相关说明(如果你是为了使用 可以不用看这一部分)
      double get_real_current(double current)
